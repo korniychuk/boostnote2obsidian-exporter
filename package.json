@@ -1,0 +1,11 @@
+{
+  "name": "aoeu",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "cson-parser": "*",
+    "lodash": "*",
+    "@types/lodash": "*",
+    "@types/node": "*",
+    "commander": "*"
+  }
+}
