@@ -5,6 +5,7 @@ import _ from 'lodash';
 
 export interface Note {
   id: string;
+  /** Ready to use in FS note name. Not empty, special chars are filtered */
   name: string;
   note_folder_id: string;
   createdAt: string;
@@ -15,6 +16,7 @@ export interface Note {
   tags: string[];
   isStarred: boolean;
   isTrashed: boolean;
+  /** Attachments path (relative to the attachmests dir). Existence of each attachment is checked at the read step */
   attachments: string[];
 }
 
@@ -25,6 +27,7 @@ export interface NoteFolder {
 }
 
 interface Config {
+  /** Root Boostnote Vault dire where boostnote.json is located */
   boostnoteDir: string;
   exportDir: string;
 }
@@ -37,10 +40,21 @@ export class Lib {
     configFilePath: string;
   };
 
+  private readonly archiveCfg: {
+    notesDirPath: string;
+    attachmentsDirPath: string;
+  };
+
   private readonly exportCfg: {
     notesDirPath: string;
     attachmentsDirPath: string;
   };
+
+  public get folders(): NoteFolder[] {
+    if (!this._folders) this._folders = this.readFolders();
+    return this._folders;
+  }
+  private _folders?: NoteFolder[];
 
   public constructor(
     config: Config,
@@ -55,51 +69,71 @@ export class Lib {
       configFilePath: path.join(config.boostnoteDir, 'boostnote.json'),
     };
 
+    this.archiveCfg = {
+      notesDirPath: path.join(config.boostnoteDir, 'archived-notes'),
+      attachmentsDirPath: path.join(config.boostnoteDir, 'archived-attachments'),
+    };
+
     this.exportCfg = {
       notesDirPath: path.join(config.exportDir, 'exported-notes'),
-      attachmentsDirPath: path.join(config.exportDir, 'exported-files'),
+      attachmentsDirPath: path.join(config.exportDir, 'exported-notes', 'Files'),
     };
 
     this.checkDirectories(this.boostnoteCfg);
   }
 
-  // TODO: implement
-  public archiveNotes(notes: Note[], archiveDir = './moved-notes') {
-    if (!fs.existsSync(archiveDir)) {
-      fs.mkdirSync(archiveDir);
-    }
+  public archiveNote(note: Note): void {
+    // 1. Archive the note itself
+    const originalPath = this.getFullOriginalNotePath(note.id);
+    if (!fs.existsSync(originalPath)) throw new Error(`Can't archive absent file: ${ originalPath }`);
 
-    // notes.forEach((note) => {
-    //   fs.renameSync()
-    // });
+    const targetNotePath = path.join(this.archiveCfg.notesDirPath, note.id + '.cson')
+    if (fs.existsSync(targetNotePath)) throw new Error(`Can't archive already archived file: ${ targetNotePath }`);
+
+    fs.renameSync(originalPath, targetNotePath);
+
+    // 2. Archive attachments
+    note.attachments.forEach((attachment) => {
+        const attachmentPath = path.join(this.boostnoteCfg.attachmentsDirPath, attachment);
+        const archivedAttachmentPath = path.join(this.archiveCfg.attachmentsDirPath, attachment);
+
+        const attachmentDirname = path.dirname(archivedAttachmentPath);
+        if (!fs.existsSync(attachmentDirname)) {
+          fs.mkdirSync(attachmentDirname, { recursive: true });
+        }
+
+        fs.renameSync(attachmentPath, archivedAttachmentPath); // existance of the source is checked at the read step
+    });
   }
 
-  public exportNotes(notes: Note[]): void {
+  public clearExportDirs(): void {
+    if (fs.existsSync(this.exportCfg.notesDirPath)) {
+      fs.rmSync(this.exportCfg.notesDirPath, { recursive: true, force: true });
+    }
+    if (fs.existsSync(this.exportCfg.attachmentsDirPath)) {
+      fs.rmSync(this.exportCfg.attachmentsDirPath, { recursive: true, force: true });
+    }
+  }
+
+  public exportNotes(
+    notes: Note[],
+    { isAddYamlFolder = false, isArchive = false }: { isAddYamlFolder?: boolean, isArchive?: boolean } = {},
+  ): void {
     this.createIfAbsentDirectories(this.exportCfg);
+    if (isArchive) this.createIfAbsentDirectories(this.archiveCfg);
 
     const exportDir = this.exportCfg.notesDirPath;
     const attachmentDir = this.boostnoteCfg.attachmentsDirPath;
     const attachmentExportDir = this.exportCfg.attachmentsDirPath;
 
     notes.forEach((note) => {
-      const filteredName = note.name
-        .replace(/-{2,}/g, '-')
-        .replace(/[^а-яё\w\s.-]/ig, '')
-        .trim()
-        .replace(/\s{2,}/g, ' ');
-
-      if (!filteredName) {
-        console.warn('Invalin note name:', _.pick(note, ['id', 'name', 'content', 'note_folder_id', 'type']));
-        return note.content;
-      }
-      const fileName = `${filteredName}.md`;
+      const fileName = `${note.name}.md`;
       const filePath = path.join(exportDir, fileName);
 
-      fs.writeFileSync(filePath, note.content, 'utf-8');
+      const content = this.generateYAMLMetadataForNote(note, isAddYamlFolder) + '\n' + note.content;
+      fs.writeFileSync(filePath, content, 'utf-8');
 
-      const attachments = note.attachments;
-
-      attachments.forEach((attachment) => {
+      note.attachments.forEach((attachment) => {
         const attachmentPath = path.join(attachmentDir, attachment);
         const exportAttachmentPath = path.join(attachmentExportDir, attachment);
 
@@ -108,15 +142,13 @@ export class Lib {
           fs.mkdirSync(attachmentDirname, { recursive: true });
         }
 
-        if (fs.existsSync(attachmentPath)) {
-          fs.copyFileSync(attachmentPath, exportAttachmentPath);
-        } else {
-          console.warn(`Attachment not found: ${attachmentPath}`);
-        }
+        fs.copyFileSync(attachmentPath, exportAttachmentPath); // existance of the source is checked at the read step
       });
 
       // const stat = fs.statSync(filePath);
       fs.utimesSync(filePath, new Date(note.updatedAt), new Date(note.createdAt));
+
+      if (isArchive) this.archiveNote(note);
     });
   }
 
@@ -163,15 +195,25 @@ export class Lib {
       .map((note: Note) => {
         note.attachments = this.collectAttachments(note); // should be before content adjustment!
         note.content = this.adjustNoteContent(note);
+        note.name = note.name
+          .replace(/-{2,}/g, '-')
+          .replace(/[^а-яё\w\s.-]/ig, '')
+          .trim()
+          .replace(/\s{2,}/g, ' ');
 
         return note;
-      });
+      })
+      .filter(note => {
+        if (note.name) return true;
+        console.warn('Invalin note name:', _.pick(note, ['id', 'name', 'content', 'note_folder_id', 'type']), '(SKIP)');
+      })
+      ;
 
     return notes;
   }
 
-  public findFolderByName(folders: NoteFolder[], folderName: string): NoteFolder {
-    const folder = folders.find(folder => folder.name.toLowerCase() === folderName.toLowerCase());
+  public findFolderByName(folderName: string): NoteFolder {
+    const folder = this.folders.find(folder => folder.name.toLowerCase() === folderName.toLowerCase());
     if (!folder) {
       throw new Error(`Can't find a folder by nam: ${folderName}`);
     }
@@ -179,10 +221,38 @@ export class Lib {
     return folder;
   }
 
-  public filterNotesByFolderName(notes: Note[], folders: NoteFolder[], folderName: string): Note[] {
-    const folderId = this.findFolderByName(folders, folderName).id;
+  public findFolderById(folderId: string): NoteFolder {
+    const folder = this.folders.find(folder => folder.id === folderId);
+    if (!folder) {
+      throw new Error(`Can't find a folder by ID: ${folderId}`);
+    }
+
+    return folder;
+  }
+
+  public filterNotesByFolderName(notes: Note[], folderName: string): Note[] {
+    const folderId = this.findFolderByName(folderName).id;
 
     return notes.filter(note => note.note_folder_id === folderId);
+  }
+
+  private generateYAMLMetadataForNote(note: Note, isAddFolder = true): string {
+    const escape = (v: string) => v.replace('"', '\\"');
+    const kv: [key: string, value: string | string[]][] = [
+      ['createdAt', note.createdAt],
+      ['updatedAt', note.updatedAt],
+    ];
+    if (note.tags.length) kv.push(['tags', note.tags.map(tag => `#${escape(tag)}`)]);
+    if (isAddFolder) kv.push(['folder', this.findFolderById(note.note_folder_id).name]);
+
+    const yaml = kv.map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`)
+                   .join('\n');
+
+    return `---\n${yaml}\n---`;
+  }
+
+  private getFullOriginalNotePath(noteId: string): string {
+    return path.join(this.boostnoteCfg.notesDirPath, noteId + '.cson');
   }
 
   private checkDirectories(dirs: { [pathKey: string]: string }): void {
@@ -202,7 +272,14 @@ export class Lib {
   private collectAttachments(note: Note): string[] {
     const matches = note.content.match(/:storage\/([^)]*)/g);
     if (!matches) return [];
-    return matches.map((match) => match.replace(/:storage\//g, ''));
+
+    const paths = matches.map((match) => match.replace(/:storage\//g, ''));
+
+    return paths.filter(relativePath => {
+        const fullPath = path.join(this.boostnoteCfg.attachmentsDirPath, relativePath);
+        if (fs.existsSync(fullPath)) return true;
+        console.warn(`Note (${note.title}): Attachment not found: ${fullPath}`);
+    });
   }
 
   private adjustNoteContent(note: Note): Note['content'] {

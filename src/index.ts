@@ -17,22 +17,22 @@ program
   .action(() => {
     const lib = getLib();
     const noteFolders = lib.readFolders();
+    const countByFolderId = _.mapValues(_.groupBy(lib.readNotes(), v => v.note_folder_id), v => v.length);
+
     console.log('List of available folders:');
-    console.table(noteFolders);
+    console.table(noteFolders.map(folder => ({...folder, count: countByFolderId[folder.id] })));
   });
 
 program
   .command('list-notes')
   .description('List all notes')
   .option('-f, --folder <folder>', 'Filter notes by folder name')
- .action((options) => {
+  .action((options) => {
     const lib = getLib();
-    const folders = lib.readFolders();
-    const foldersById = new Map(folders.map(v => [v.id, v]));
     let notes = lib.readNotes();
 
     if (options.folder) {
-      notes = lib.filterNotesByFolderName(notes, folders, options.folder);
+      notes = lib.filterNotesByFolderName(notes, options.folder);
 
       console.log(`Notes for folder: ${options.folder}`);
     } else {
@@ -41,20 +41,26 @@ program
 
    console.table(notes.map((note) => ({
      ..._.pick(note, ['id', 'name', 'createdAt']),
-     folder: foldersById.get(note.note_folder_id)?.name,
+     folder: lib.findFolderById(note.note_folder_id)?.name,
    })));
   });
 
 program
   .command('export-notes')
   .description('Export notes')
-  .option('-f, --folder <folder>', 'Export notes for the specified folder')
-  .option('-t, --add-tags <tags>', 'Add YAML tags to the exported note')
+  .option('-f, --folder <folder>',   'Export notes for the specified folder')
+  .option('-t, --add-tags <tags>',   'Add YAML tags to the exported note')
+  .option('-c, --clear-export-dirs', 'Deletes the export dirs, if they are exist')
+  .option('-a, --archive',           'Move notes to the archive folder')
   .action((options) => {
+    const isArchive = !!options.archive;
     const lib = getLib();
-    const folders = lib.readFolders();
-    // const foldersById = new Map(folders.map(v => [v.id, v]));
     let notes = lib.readNotes();
+
+    if (!!options.clearExportDirs) {
+      lib.clearExportDirs();
+      console.log('Export dirs are deleted');
+    }
 
     if (options.addTags) {
       console.warn('--add-tags is not supported yet')
@@ -62,14 +68,15 @@ program
     }
 
     if (options.folder) {
-      notes = lib.filterNotesByFolderName(notes, folders, options.folder);
+      notes = lib.filterNotesByFolderName(notes, options.folder);
 
-      console.log(`Export notes for folder: ${options.folder}`);
+      console.log(`Export notes for folder: ${options.folder}`, ' (', notes.length, ')');
     } else {
-      console.log('Export all notes');
+      console.log('Export all notes (', notes.length, ')');
     }
 
-    lib.exportNotes(notes)
+    lib.exportNotes(notes, { isArchive })
+    console.log('Done!');
   });
 
 program.parse(process.argv);

@@ -1,5 +1,5 @@
 {
-  "name": "aoeu",
+  "name": "boostnote2obsidian",
   "main": "./src/index.ts",
   "dependencies": {
     "cson-parser": "*",
