@@ -102,7 +102,12 @@ export class Lib {
           fs.mkdirSync(attachmentDirname, { recursive: true });
         }
 
-        fs.renameSync(attachmentPath, archivedAttachmentPath); // existance of the source is checked at the read step
+        const isFileAlreadyMoved = !fs.existsSync(attachmentPath) && fs.existsSync(archivedAttachmentPath);
+        if (!isFileAlreadyMoved) {
+          fs.renameSync(attachmentPath, archivedAttachmentPath); // existance of the source is checked at the read step
+        } else {
+          console.warn('Warning! File is already moved:', attachmentPath);
+        }
     });
   }
 
@@ -234,6 +239,18 @@ export class Lib {
     const folderId = this.findFolderByName(folderName).id;
 
     return notes.filter(note => note.note_folder_id === folderId);
+  }
+
+  // TODO: Delete if not used
+  private getFileSizeInBytes(filePath: string): number {
+    try {
+      const stats = fs.statSync(filePath);
+      const fileSizeInBytes = stats.size;
+      return fileSizeInBytes;
+    } catch (err) {
+      console.error(`Error: Can't get the file size: ${filePath}.\nOriginal Error:`, (err as any)?.message);
+      return 0;
+    }
   }
 
   private generateYAMLMetadataForNote(note: Note, isAddFolder = true): string {
