@@ -132,8 +132,12 @@ export class Lib {
     const attachmentExportDir = this.exportCfg.attachmentsDirPath;
 
     notes.forEach((note) => {
+      const folder = this.findFolderById(note.note_folder_id);
+      const folderPath = path.join(exportDir, folder.name);
+      if (!fs.existsSync(folderPath )) fs.mkdirSync(folderPath , { recursive: true });
       const fileName = `${note.name}.md`;
-      const filePath = path.join(exportDir, fileName);
+      const filePath = path.join(folderPath, fileName);
+
 
       const content = this.generateYAMLMetadataForNote(note, isAddYamlFolder) + '\n' + note.content;
       fs.writeFileSync(filePath, content, 'utf-8');
