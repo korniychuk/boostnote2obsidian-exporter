@@ -76,8 +76,8 @@ program
       console.log('Export all notes (', notes.length, ')');
     }
 
-    lib.exportNotes(notes, { isArchive, isByFolder: !!options.byFolder })
-    console.log('Done!');
+    const stats = lib.exportNotes(notes, { isArchive, isByFolder: !!options.byFolder });
+    console.log(`Done! Written: ${stats.written} (renamed copies: ${stats.renamed}), skipped as identical: ${stats.skipped}`);
   });
 
 program.parse(process.argv);

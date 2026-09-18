@@ -36,6 +36,17 @@ export interface NoteFolder {
   color: string;
 }
 
+export interface ExportStats {
+  written: number;
+  /** An identical note (same body, YAML metadata aside) already exists on disk */
+  skipped: number;
+  /** Exported under a suffixed name, as the plain one is taken by a different note */
+  renamed: number;
+}
+
+/** Leading YAML metadata block, as written by the exporter */
+const YAML_METADATA_REGEX = /^---\n[\s\S]*?\n---(\n|$)/;
+
 interface Config {
   /** Root Boostnote Vault dire where boostnote.json is located */
   boostnoteDir: string;
@@ -137,21 +148,30 @@ export class Lib {
       isArchive = false,
       isByFolder = false,
     }: { isAddYamlFolder?: boolean, isArchive?: boolean, isByFolder?: boolean } = {},
-  ): void {
+  ): ExportStats {
     this.createIfAbsentDirectories(this.exportCfg);
     if (isArchive) this.createIfAbsentDirectories(this.archiveCfg);
 
     const attachmentDir = this.boostnoteCfg.attachmentsDirPath;
     const attachmentExportDir = this.exportCfg.attachmentsDirPath;
     const usedFilePaths = new Set<string>();
+    const stats: ExportStats = { written: 0, skipped: 0, renamed: 0 };
 
     notes.forEach((note) => {
       const noteDir = isByFolder ? this.getNoteFolderExportDir(note) : this.exportCfg.notesDirPath;
       fs.mkdirSync(noteDir, { recursive: true });
-      const filePath = this.reserveNoteFilePath(note, noteDir, usedFilePaths);
+      const { filePath, isIdentical, isRenamed } = this.reserveNoteFilePath(note, noteDir, usedFilePaths);
 
-      const content = this.generateYAMLMetadataForNote(note, isAddYamlFolder) + '\n' + note.content;
-      fs.writeFileSync(filePath, content, 'utf-8');
+      if (isIdentical) {
+        console.log(`Note (${note.title}): Identical file already exists (SKIP): ${filePath}`);
+        stats.skipped++;
+      } else {
+        const content = this.generateYAMLMetadataForNote(note, isAddYamlFolder) + '\n' + note.content;
+        fs.writeFileSync(filePath, content, 'utf-8');
+        fs.utimesSync(filePath, new Date(note.updatedAt), new Date(note.createdAt));
+        stats.written++;
+        if (isRenamed) stats.renamed++;
+      }
 
       note.attachments.forEach((attachment) => {
         const attachmentPath = path.join(attachmentDir, attachment);
@@ -165,11 +185,10 @@ export class Lib {
         fs.copyFileSync(attachmentPath, exportAttachmentPath); // existance of the source is checked at the read step
       });
 
-      // const stat = fs.statSync(filePath);
-      fs.utimesSync(filePath, new Date(note.updatedAt), new Date(note.createdAt));
-
       if (isArchive) this.archiveNote(note);
     });
+
+    return stats;
   }
 
   public readFolders(): NoteFolder[] {
@@ -302,24 +321,39 @@ export class Lib {
   }
 
   /**
-   * Picks a free `.md` path for the note, so notes with equal names never overwrite each other.
-   * Duplicates get a ` (2)`, ` (3)`, ... suffix. A path is taken if it was used in this run
-   * (case-insensitive, as macOS/Windows file systems are) or the file already exists on disk.
+   * Picks the `.md` path for the note, so notes with equal names never overwrite each other.
+   * A candidate (`Name.md`, `Name (2).md`, ...) is taken when it was used in this run (case-insensitive,
+   * as macOS/Windows file systems are) or holds a different note on disk. An existing file with an identical
+   * body is reused (`isIdentical`), so re-exporting does not produce copies.
    */
-  private reserveNoteFilePath(note: Note, noteDir: string, usedFilePaths: Set<string>): string {
+  private reserveNoteFilePath(
+    note: Note,
+    noteDir: string,
+    usedFilePaths: Set<string>,
+  ): { filePath: string, isIdentical: boolean, isRenamed: boolean } {
     const basePath = path.join(noteDir, note.name);
-    const isTaken = (filePath: string) => usedFilePaths.has(filePath.toLowerCase()) || fs.existsSync(filePath);
 
-    let filePath = `${basePath}.md`;
-    for (let copyNumber = 2; isTaken(filePath); copyNumber++) {
-      filePath = `${basePath} (${copyNumber}).md`;
-    }
-    if (filePath !== `${basePath}.md`) {
-      console.warn(`Note (${note.title}): Name is already taken, exported as: ${path.basename(filePath)}`);
-    }
+    for (let copyNumber = 1; ; copyNumber++) {
+      const filePath = copyNumber === 1 ? `${basePath}.md` : `${basePath} (${copyNumber}).md`;
+      if (usedFilePaths.has(filePath.toLowerCase())) continue;
 
-    usedFilePaths.add(filePath.toLowerCase());
-    return filePath;
+      const isExisting = fs.existsSync(filePath);
+      if (isExisting && !this.hasSameNoteBody(filePath, note)) continue;
+
+      usedFilePaths.add(filePath.toLowerCase());
+      const isRenamed = copyNumber > 1;
+      if (isRenamed && !isExisting) {
+        console.warn(`Note (${note.title}): Name is taken by a different note, exported as: ${path.basename(filePath)}`);
+      }
+
+      return { filePath, isIdentical: isExisting, isRenamed };
+    }
+  }
+
+  /** Compares note bodies ignoring the YAML metadata and surrounding whitespace, so exporter format changes don't matter */
+  private hasSameNoteBody(filePath: string, note: Note): boolean {
+    const existingBody = fs.readFileSync(filePath, 'utf-8').replace(YAML_METADATA_REGEX, '').trim();
+    return existingBody === note.content.trim();
   }
 
   private getFullOriginalNotePath(noteId: string): string {
