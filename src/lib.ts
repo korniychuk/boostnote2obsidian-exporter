@@ -143,11 +143,12 @@ export class Lib {
 
     const attachmentDir = this.boostnoteCfg.attachmentsDirPath;
     const attachmentExportDir = this.exportCfg.attachmentsDirPath;
+    const usedFilePaths = new Set<string>();
 
     notes.forEach((note) => {
       const noteDir = isByFolder ? this.getNoteFolderExportDir(note) : this.exportCfg.notesDirPath;
       fs.mkdirSync(noteDir, { recursive: true });
-      const filePath = path.join(noteDir, `${note.name}.md`);
+      const filePath = this.reserveNoteFilePath(note, noteDir, usedFilePaths);
 
       const content = this.generateYAMLMetadataForNote(note, isAddYamlFolder) + '\n' + note.content;
       fs.writeFileSync(filePath, content, 'utf-8');
@@ -298,6 +299,27 @@ export class Lib {
     }
 
     return path.join(rootDir, folderName);
+  }
+
+  /**
+   * Picks a free `.md` path for the note, so notes with equal names never overwrite each other.
+   * Duplicates get a ` (2)`, ` (3)`, ... suffix. A path is taken if it was used in this run
+   * (case-insensitive, as macOS/Windows file systems are) or the file already exists on disk.
+   */
+  private reserveNoteFilePath(note: Note, noteDir: string, usedFilePaths: Set<string>): string {
+    const basePath = path.join(noteDir, note.name);
+    const isTaken = (filePath: string) => usedFilePaths.has(filePath.toLowerCase()) || fs.existsSync(filePath);
+
+    let filePath = `${basePath}.md`;
+    for (let copyNumber = 2; isTaken(filePath); copyNumber++) {
+      filePath = `${basePath} (${copyNumber}).md`;
+    }
+    if (filePath !== `${basePath}.md`) {
+      console.warn(`Note (${note.title}): Name is already taken, exported as: ${path.basename(filePath)}`);
+    }
+
+    usedFilePaths.add(filePath.toLowerCase());
+    return filePath;
   }
 
   private getFullOriginalNotePath(noteId: string): string {
