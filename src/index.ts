@@ -52,6 +52,7 @@ program
   .option('-t, --add-tags <tags>',   'Add YAML tags to the exported note')
   .option('-c, --clear-export-dirs', 'Deletes the export dirs, if they are exist')
   .option('-a, --archive',           'Move notes to the archive folder')
+  .option('-d, --by-folder',         'Export notes into subdirs named after their Boostnote folders')
   .action((options) => {
     const isArchive = !!options.archive;
     const lib = getLib();
@@ -75,7 +76,7 @@ program
       console.log('Export all notes (', notes.length, ')');
     }
 
-    lib.exportNotes(notes, { isArchive })
+    lib.exportNotes(notes, { isArchive, isByFolder: !!options.byFolder })
     console.log('Done!');
   });
 

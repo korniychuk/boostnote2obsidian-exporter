@@ -3,6 +3,16 @@ import * as path from 'path';
 import * as cson from 'cson-parser';
 import _ from 'lodash';
 
+/** Drops chars that are unsafe in file names (incl. path separators) and leading dots (hidden files, `..`) */
+function sanitizeFileName(name: string): string {
+  return name
+    .replace(/-{2,}/g, '-')
+    .replace(/[^а-яё\w\s.-]/ig, '')
+    .replace(/^[\s.]+/, '')
+    .trim()
+    .replace(/\s{2,}/g, ' ');
+}
+
 export interface Note {
   id: string;
   /** Ready to use in FS note name. Not empty, special chars are filtered */
@@ -122,22 +132,22 @@ export class Lib {
 
   public exportNotes(
     notes: Note[],
-    { isAddYamlFolder = false, isArchive = false }: { isAddYamlFolder?: boolean, isArchive?: boolean } = {},
+    {
+      isAddYamlFolder = false,
+      isArchive = false,
+      isByFolder = false,
+    }: { isAddYamlFolder?: boolean, isArchive?: boolean, isByFolder?: boolean } = {},
   ): void {
     this.createIfAbsentDirectories(this.exportCfg);
     if (isArchive) this.createIfAbsentDirectories(this.archiveCfg);
 
-    const exportDir = this.exportCfg.notesDirPath;
     const attachmentDir = this.boostnoteCfg.attachmentsDirPath;
     const attachmentExportDir = this.exportCfg.attachmentsDirPath;
 
     notes.forEach((note) => {
-      const folder = this.findFolderById(note.note_folder_id);
-      const folderPath = path.join(exportDir, folder.name);
-      if (!fs.existsSync(folderPath )) fs.mkdirSync(folderPath , { recursive: true });
-      const fileName = `${note.name}.md`;
-      const filePath = path.join(folderPath, fileName);
-
+      const noteDir = isByFolder ? this.getNoteFolderExportDir(note) : this.exportCfg.notesDirPath;
+      fs.mkdirSync(noteDir, { recursive: true });
+      const filePath = path.join(noteDir, `${note.name}.md`);
 
       const content = this.generateYAMLMetadataForNote(note, isAddYamlFolder) + '\n' + note.content;
       fs.writeFileSync(filePath, content, 'utf-8');
@@ -204,11 +214,7 @@ export class Lib {
       .map((note: Note) => {
         note.attachments = this.collectAttachments(note); // should be before content adjustment!
         note.content = this.adjustNoteContent(note);
-        note.name = note.name
-          .replace(/-{2,}/g, '-')
-          .replace(/[^а-яё\w\s.-]/ig, '')
-          .trim()
-          .replace(/\s{2,}/g, ' ');
+        note.name = sanitizeFileName(note.name);
 
         return note;
       })
@@ -270,6 +276,28 @@ export class Lib {
                    .join('\n');
 
     return `---\n${yaml}\n---`;
+  }
+
+  /**
+   * Export dir named after the note's Boostnote folder.
+   * Falls back to the export root when the folder is unknown or its name is empty after sanitizing.
+   */
+  private getNoteFolderExportDir(note: Note): string {
+    const rootDir = this.exportCfg.notesDirPath;
+    const folder = this.folders.find(({ id }) => id === note.note_folder_id);
+    let folderName = folder ? sanitizeFileName(folder.name) : '';
+    if (!folderName) {
+      console.warn(`Note (${note.title}): Unknown folder or invalid folder name: ${folder?.name ?? note.note_folder_id} (exported to the root)`);
+      return rootDir;
+    }
+
+    const attachmentsDirName = path.basename(this.exportCfg.attachmentsDirPath);
+    if (folderName.toLowerCase() === attachmentsDirName.toLowerCase()) {
+      folderName = `${folderName} (folder)`;
+      console.warn(`Folder "${folder?.name}" clashes with the attachments dir, exported as: ${folderName}`);
+    }
+
+    return path.join(rootDir, folderName);
   }
 
   private getFullOriginalNotePath(noteId: string): string {
