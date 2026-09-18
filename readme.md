@@ -7,6 +7,7 @@
 - Moves attachments from `attachments` to `exported-notes/Files`
 - Adds YAML-metadata with 2 attributes `createdAt` & `updatedAt`
 - Never overwrites notes with equal names: duplicates get a ` (2)`, ` (3)`, ... suffix (with a warning)
+- Re-export is safe: a note whose identical file already exists is skipped (see *Notes* below)
 - Optionally exports notes into subdirs named after their Boostnote folders (`--by-folder`)
 
 ### Installation
@@ -110,7 +111,11 @@ Export notes for folder: other ( 55 )
 
 Notes:
 - `--by-folder`: folder names are sanitized like note names. Notes of an unknown folder go to the export root (with a warning).
-- Files that already exist in `exported-notes` are never overwritten: re-exporting without `--clear-export-dirs` produces ` (2)` copies.
+- Files that already exist in `exported-notes` are never overwritten. An existing file is compared with the note by its body only
+  (YAML metadata and surrounding whitespace are ignored, so exporter format changes don't matter):
+  - same body → the note is skipped (`Identical file already exists (SKIP)`);
+  - different body (the note changed in Boostnote, the file was edited in Obsidian, or it's another note) → the note gets a ` (2)`, ` (3)`, ... suffix.
+- The final line sums it up: `Done! Written: N (renamed copies: K), skipped as identical: M`.
 
 ### Ideas
 - [ ] Add name transformers to transform daily notes date for example
