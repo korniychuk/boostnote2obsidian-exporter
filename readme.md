@@ -6,6 +6,8 @@
 - Updates attachments paths. Ex.: `:storage/note-hash/file.png` -> `note-hash/file.png`
 - Moves attachments from `attachments` to `exported-notes/Files`
 - Adds YAML-metadata with 2 attributes `createdAt` & `updatedAt`
+- Never overwrites notes with equal names: duplicates get a ` (2)`, ` (3)`, ... suffix (with a warning)
+- Optionally exports notes into subdirs named after their Boostnote folders (`--by-folder`)
 
 ### Installation
 
@@ -37,7 +39,7 @@ The script creates next folders inside the root of the Boostnote Vault:
 
 - ./**archived-notes** - backup of the converted notes
 - ./**archived-attachments** - backup of the moved attachments
-- ./**exported-notes** - the converted notes that you looking for.
+- ./**exported-notes** - the converted notes that you looking for. With `--by-folder`: `exported-notes/<Folder>/<Note>.md`
 - ./exported-notes/**Files** - all attachments of the converted notes. (move its content to Obsidian attachments dir)
 
 ### Usage
@@ -95,6 +97,7 @@ Options:
   -t, --add-tags <tags>    Add YAML tags to the exported note
   -c, --clear-export-dirs  Deletes the export dirs, if they are exist
   -a, --archive            Move notes to the archive folder
+  -d, --by-folder          Export notes into subdirs named after their Boostnote folders
   -h, --help               display help for command
 ```
 
@@ -104,6 +107,10 @@ Options:
 Export dirs are deleted
 Export notes for folder: other ( 55 )
 ```
+
+Notes:
+- `--by-folder`: folder names are sanitized like note names. Notes of an unknown folder go to the export root (with a warning).
+- Files that already exist in `exported-notes` are never overwritten: re-exporting without `--clear-export-dirs` produces ` (2)` copies.
 
 ### Ideas
 - [ ] Add name transformers to transform daily notes date for example
